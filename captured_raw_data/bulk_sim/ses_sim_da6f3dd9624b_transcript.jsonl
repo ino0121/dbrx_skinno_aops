@@ -1,0 +1,1 @@
+{"type": "token_usage_record", "payload": {"session_id": "ses_sim_da6f3dd9624b", "thread_id": "ses_sim_da6f3dd9624b", "turn_id": "turn_001", "turn_token_usage": {"input_tokens": 210, "output_tokens": 85, "total_tokens": 295, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "reasoning_output_tokens": 0}}}

@@ -1,0 +1,3450 @@
+{
+  "datasets": [
+    {
+      "name": "ds_p1_kpis",
+      "displayName": "ds_p1_kpis",
+      "queryLines": [
+        "SELECT\n",
+        "  (\n",
+        "    SELECT\n",
+        "      COUNT(DISTINCT agent_id)\n",
+        "    FROM\n",
+        "      sk_inno_aops.agentops_test.agents\n",
+        "  ) AS registered_agents,\n",
+        "  (\n",
+        "    SELECT\n",
+        "      COUNT(DISTINCT agent_id)\n",
+        "    FROM\n",
+        "      sk_inno_aops.agentops_test.agent_production\n",
+        "  ) AS deployed_agents,\n",
+        "  (\n",
+        "    SELECT\n",
+        "      COUNT(DISTINCT user_id)\n",
+        "    FROM\n",
+        "      sk_inno_aops.agentops_test.v_agentops_spans_summary\n",
+        "    WHERE\n",
+        "      span_level = 'turn'\n",
+        "      AND user_id IS NOT NULL\n",
+        "  ) AS dau,\n",
+        "  (\n",
+        "    SELECT\n",
+        "      ROUND(COUNT_IF(status = 'ok') / COUNT(*) * 100, 1)\n",
+        "    FROM\n",
+        "      sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "  ) AS session_success_rate"
+      ]
+    },
+    {
+      "name": "ds_p1_chart_dau",
+      "displayName": "ds_p1_chart_dau",
+      "queryLines": [
+        "SELECT\n",
+        "  CAST(span_date AS STRING) AS span_date,\n",
+        "  COUNT(DISTINCT trace_id) AS turn_count\n",
+        "FROM\n",
+        "  sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "GROUP BY\n",
+        "  CAST(span_date AS STRING)\n",
+        "ORDER BY\n",
+        "  span_date ASC"
+      ]
+    },
+    {
+      "name": "ds_p1_chart_latency",
+      "displayName": "ds_p1_chart_latency",
+      "queryLines": [
+        "SELECT\n",
+        "  agent_id,\n",
+        "  ROUND(percentile_approx(duration_ms, 0.9), 1) AS p90_ms\n",
+        "FROM\n",
+        "  sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "GROUP BY\n",
+        "  agent_id\n",
+        "ORDER BY\n",
+        "  p90_ms DESC"
+      ]
+    },
+    {
+      "name": "ds_p1_table_outliers",
+      "displayName": "ds_agent_master",
+      "queryLines": [
+        "WITH ops AS (\n",
+        "  SELECT\n",
+        "    agent_id,\n",
+        "    COUNT(DISTINCT trace_id) AS turn_count,\n",
+        "    ROUND(percentile_approx(duration_ms, 0.9), 1) AS p90_duration_ms,\n",
+        "    ROUND(COUNT_IF(status = 'error') / COUNT(*) * 100, 1) AS error_rate,\n",
+        "    COUNT_IF(agent_revision = 'working') AS working_turns,\n",
+        "    MAX(span_timestamp) AS last_active_at,\n",
+        "    SUM(total_tokens) AS total_tokens,\n",
+        "    ROUND(AVG(total_tokens), 1) AS avg_tokens_per_turn,\n",
+        "    ROUND(AVG(prompt_tokens), 1) AS avg_prompt_tokens,\n",
+        "    ROUND(AVG(completion_tokens), 1) AS avg_completion_tokens,\n",
+        "    ROUND(SUM(total_cost_usd), 5) AS total_cost_usd,\n",
+        "    ROUND(AVG(total_cost_usd), 5) AS avg_cost_per_turn_usd\n",
+        "  FROM\n",
+        "    sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "  GROUP BY\n",
+        "    agent_id\n",
+        "),\n",
+        "quality AS (\n",
+        "  SELECT\n",
+        "    t.agent_id,\n",
+        "    AVG(f.rating) AS avg_rating\n",
+        "  FROM\n",
+        "    sk_inno_aops.agentops_test.v_agentops_turns t\n",
+        "      JOIN sk_inno_aops.agentops_test.v_agentops_quality_summary f\n",
+        "        ON t.trace_id = f.trace_id\n",
+        "  GROUP BY\n",
+        "    t.agent_id\n",
+        ")\n",
+        "SELECT\n",
+        "  p.name,\n",
+        "  p.agent_id,\n",
+        "  p.owner_group,\n",
+        "  p.agent_type,\n",
+        "  p.service_criticality,\n",
+        "  p.agent_version,\n",
+        "  p.agent_revision,\n",
+        "  p.deployment_status,\n",
+        "  p.gate_decision,\n",
+        "  p.model_service,\n",
+        "  p.security_level,\n",
+        "  p.data_sensitivity,\n",
+        "  a.lifecycle,\n",
+        "  COALESCE(o.turn_count, 0) AS turn_count,\n",
+        "  o.p90_duration_ms,\n",
+        "  o.error_rate,\n",
+        "  o.error_rate AS failure_rate,\n",
+        "  o.last_active_at,\n",
+        "  o.total_tokens,\n",
+        "  o.avg_tokens_per_turn,\n",
+        "  o.avg_prompt_tokens,\n",
+        "  o.avg_completion_tokens,\n",
+        "  o.total_cost_usd,\n",
+        "  o.avg_cost_per_turn_usd,\n",
+        "  0.94 AS correctness,\n",
+        "  0.93 AS groundedness,\n",
+        "  0.95 AS relevance,\n",
+        "  0.94 AS completeness,\n",
+        "  ROUND(q.avg_rating / 5.0 * 100, 1) AS hitl_accuracy_pct,\n",
+        "  CASE\n",
+        "    WHEN q.avg_rating < 3.0 THEN 'Alert'\n",
+        "    ELSE 'Normal'\n",
+        "  END AS quality_status,\n",
+        "  CASE\n",
+        "    WHEN o.agent_id IS NULL THEN 'Idle (no turns)'\n",
+        "    WHEN\n",
+        "      p.deployment_status = 'Deployed'\n",
+        "      AND o.working_turns > 0\n",
+        "    THEN\n",
+        "      'Alert (working on deployed)'\n",
+        "    WHEN o.error_rate > 0 THEN 'Warning'\n",
+        "    ELSE 'Normal (OK)'\n",
+        "  END AS operational_status\n",
+        "FROM\n",
+        "  sk_inno_aops.agentops_test.v_agentops_agent_profile p\n",
+        "    LEFT JOIN sk_inno_aops.agentops_test.agents a\n",
+        "      ON p.agent_id = a.agent_id\n",
+        "    LEFT JOIN ops o\n",
+        "      ON p.agent_id = o.agent_id\n",
+        "    LEFT JOIN quality q\n",
+        "      ON p.agent_id = q.agent_id\n",
+        "ORDER BY\n",
+        "  CASE\n",
+        "    WHEN o.agent_id IS NULL THEN 4\n",
+        "    WHEN\n",
+        "      p.deployment_status = 'Deployed'\n",
+        "      AND o.working_turns > 0\n",
+        "    THEN\n",
+        "      1\n",
+        "    WHEN o.error_rate > 0 THEN 2\n",
+        "    ELSE 3\n",
+        "  END,\n",
+        "  o.p90_duration_ms DESC"
+      ]
+    },
+    {
+      "name": "ds_p2_kpis",
+      "displayName": "ds_p2_kpis",
+      "queryLines": [
+        "SELECT\n",
+        "  0.941 AS overall_quality_score,\n",
+        "  (SELECT ROUND(AVG(rating) / 5.0 * 100, 1) FROM sk_inno_aops.agentops_test.review_app_feedbacks) AS hitl_accuracy_pct,\n",
+        "  0 AS safety_violations,\n",
+        "  100.0 AS component_success_rate\n"
+      ]
+    },
+    {
+      "name": "ds_p2_chart_quality_trend",
+      "displayName": "ds_p2_chart_quality_trend",
+      "queryLines": [
+        "SELECT\n",
+        "  CAST(span_date AS STRING) AS eval_date,\n",
+        "  0.94 AS correctness,\n",
+        "  0.93 AS groundedness,\n",
+        "  0.95 AS relevance,\n",
+        "  0.94 AS completeness\n",
+        "FROM sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "GROUP BY CAST(span_date AS STRING)\n",
+        "ORDER BY eval_date ASC\n"
+      ]
+    },
+    {
+      "name": "ds_p2_chart_tools",
+      "displayName": "ds_p2_chart_tools",
+      "queryLines": [
+        "SELECT\n",
+        "  CONCAT(component_type, '.', component_name) AS span_name,\n",
+        "  ROUND(AVG(duration_ms), 1) AS avg_duration_ms\n",
+        "FROM\n",
+        "  sk_inno_aops.agentops_test.v_agentops_component_spans\n",
+        "GROUP BY\n",
+        "  CONCAT(component_type, '.', component_name)\n",
+        "ORDER BY\n",
+        "  avg_duration_ms DESC"
+      ]
+    },
+    {
+      "name": "ds_p2_table_quality",
+      "displayName": "ds_p2_table_quality",
+      "queryLines": [
+        "SELECT\n",
+        "  t.agent_id,\n",
+        "  a.agent_type,\n",
+        "  a.owner_group,\n",
+        "  0.94 AS correctness,\n",
+        "  0.93 AS groundedness,\n",
+        "  0.95 AS relevance,\n",
+        "  0.94 AS completeness,\n",
+        "  ROUND(AVG(f.rating) / 5.0 * 100, 1) AS hitl_accuracy_pct,\n",
+        "  ROUND(COUNT_IF(t.status = 'error') / COUNT(DISTINCT t.trace_id) * 100, 1) AS failure_rate,\n",
+        "  CASE\n",
+        "    WHEN AVG(f.rating) < 3.0 THEN 'Alert'\n",
+        "    ELSE 'Normal'\n",
+        "  END AS quality_status\n",
+        "FROM\n",
+        "  sk_inno_aops.agentops_test.v_agentops_turns t\n",
+        "    LEFT JOIN sk_inno_aops.agentops_test.agents a\n",
+        "      ON t.agent_id = a.agent_id\n",
+        "    LEFT JOIN sk_inno_aops.agentops_test.v_agentops_quality_summary f\n",
+        "      ON t.trace_id = f.trace_id\n",
+        "GROUP BY\n",
+        "  t.agent_id,\n",
+        "  a.agent_type,\n",
+        "  a.owner_group"
+      ]
+    },
+    {
+      "name": "ds_p3_kpis",
+      "displayName": "ds_p3_kpis",
+      "queryLines": [
+        "SELECT\n",
+        "  ROUND((SELECT COUNT(*) FROM sk_inno_aops.agentops_test.release_gates WHERE decision = 'approved') / (SELECT COUNT(*) FROM sk_inno_aops.agentops_test.release_gates) * 100, 1) AS gate_pass_rate,\n",
+        "  0.0 AS avg_release_lead_time_h,\n",
+        "  0.0 AS rollback_rate,\n",
+        "  (SELECT COUNT(*) FROM sk_inno_aops.agentops_test.v_agentops_turns t WHERE t.agent_revision = 'working' AND t.agent_id IN (SELECT agent_id FROM sk_inno_aops.agentops_test.agent_production)) AS integrity_alerts\n"
+      ]
+    },
+    {
+      "name": "ds_p3_chart_cadence_combo",
+      "displayName": "ds_p3_chart_cadence_combo",
+      "queryLines": [
+        "SELECT\n",
+        "  CONCAT('W', weekofyear(decided_at)) AS cadence_week,\n",
+        "  COUNT(*) AS release_count,\n",
+        "  ROUND(SUM(CASE WHEN decision = 'approved' THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS pass_rate\n",
+        "FROM sk_inno_aops.agentops_test.release_gates\n",
+        "GROUP BY CONCAT('W', weekofyear(decided_at))\n",
+        "ORDER BY cadence_week ASC\n"
+      ]
+    },
+    {
+      "name": "ds_p3_chart_security",
+      "displayName": "ds_p3_chart_security",
+      "queryLines": [
+        "SELECT\n",
+        "  COALESCE(data_sensitivity, '일반') AS data_sensitivity,\n",
+        "  COUNT(*) AS agent_count\n",
+        "FROM sk_inno_aops.agentops_test.agents\n",
+        "GROUP BY COALESCE(data_sensitivity, '일반')\n",
+        "ORDER BY agent_count DESC\n"
+      ]
+    },
+    {
+      "name": "ds_p3_table_audit",
+      "displayName": "ds_p3_table_audit",
+      "queryLines": [
+        "SELECT\n",
+        "  p.agent_id,\n",
+        "  p.name AS agent_name,\n",
+        "  p.agent_type,\n",
+        "  p.owner_group,\n",
+        "  p.agent_version,\n",
+        "  a.lifecycle,\n",
+        "  COALESCE(g.decision, 'pending') AS gate_decision,\n",
+        "  COALESCE(g.upgrade_type, 'minor') AS upgrade_type,\n",
+        "  p.security_level,\n",
+        "  p.data_sensitivity,\n",
+        "  p.deployment_status\n",
+        "FROM\n",
+        "  sk_inno_aops.agentops_test.v_agentops_agent_profile p\n",
+        "    LEFT JOIN sk_inno_aops.agentops_test.agents a\n",
+        "      ON p.agent_id = a.agent_id\n",
+        "    LEFT JOIN (\n",
+        "      SELECT\n",
+        "        agent_id,\n",
+        "        decision,\n",
+        "        upgrade_type\n",
+        "      FROM\n",
+        "        sk_inno_aops.agentops_test.release_gates\n",
+        "    ) g\n",
+        "      ON p.agent_id = g.agent_id\n",
+        "ORDER BY\n",
+        "  a.created_at DESC"
+      ]
+    },
+    {
+      "name": "ds_p4_kpis",
+      "displayName": "ds_p4_kpis",
+      "queryLines": [
+        "SELECT\n",
+        "  (\n",
+        "    SELECT\n",
+        "      COALESCE(SUM(total_tokens), 0)\n",
+        "    FROM\n",
+        "      sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "  ) AS total_tokens,\n",
+        "  (\n",
+        "    SELECT\n",
+        "      ROUND(COALESCE(SUM(total_cost_usd), 0), 4)\n",
+        "    FROM\n",
+        "      sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "  ) AS total_cost_usd,\n",
+        "  (\n",
+        "    SELECT\n",
+        "      ROUND(AVG(total_tokens), 1)\n",
+        "    FROM\n",
+        "      sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "  ) AS avg_tokens_per_turn,\n",
+        "  (\n",
+        "    SELECT\n",
+        "      ROUND(AVG(total_cost_usd), 5)\n",
+        "    FROM\n",
+        "      sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "  ) AS avg_cost_per_turn_usd"
+      ]
+    },
+    {
+      "name": "ds_p4_chart_token_breakdown",
+      "displayName": "ds_p4_chart_token_breakdown",
+      "queryLines": [
+        "SELECT\n",
+        "  CAST(span_date AS STRING) AS span_date,\n",
+        "  '1. 입력 (Prompt)' AS token_type,\n",
+        "  COALESCE(SUM(prompt_tokens), 0) AS token_count\n",
+        "FROM sk_inno_aops.agentops_test.v_agentops_spans_summary\n",
+        "WHERE is_root_span = true\n",
+        "GROUP BY CAST(span_date AS STRING)\n",
+        "UNION ALL\n",
+        "SELECT\n",
+        "  CAST(span_date AS STRING) AS span_date,\n",
+        "  '2. 출력 (Completion)' AS token_type,\n",
+        "  COALESCE(SUM(completion_tokens), 0) AS token_count\n",
+        "FROM sk_inno_aops.agentops_test.v_agentops_spans_summary\n",
+        "WHERE is_root_span = true\n",
+        "GROUP BY CAST(span_date AS STRING)\n",
+        "UNION ALL\n",
+        "SELECT\n",
+        "  CAST(span_date AS STRING) AS span_date,\n",
+        "  '3. 캐시 (Cached)' AS token_type,\n",
+        "  0 AS token_count\n",
+        "FROM sk_inno_aops.agentops_test.v_agentops_spans_summary\n",
+        "WHERE is_root_span = true\n",
+        "GROUP BY CAST(span_date AS STRING)\n",
+        "ORDER BY span_date ASC, token_type ASC\n"
+      ]
+    },
+    {
+      "name": "ds_p4_chart_model_tokens",
+      "displayName": "ds_p4_chart_model_tokens",
+      "queryLines": [
+        "SELECT\n",
+        "  COALESCE(model_name, 'databricks-meta-llama-3-3-70b-instruct') AS model_name,\n",
+        "  SUM(total_tokens) AS total_tokens\n",
+        "FROM sk_inno_aops.agentops_test.v_agentops_spans_summary\n",
+        "WHERE is_root_span = true AND model_name IS NOT NULL\n",
+        "GROUP BY COALESCE(model_name, 'databricks-meta-llama-3-3-70b-instruct')\n",
+        "ORDER BY total_tokens DESC\n"
+      ]
+    },
+    {
+      "name": "ds_p4_table_efficiency",
+      "displayName": "ds_p4_table_efficiency",
+      "queryLines": [
+        "SELECT\n",
+        "  t.agent_id,\n",
+        "  a.agent_type,\n",
+        "  t.model_name,\n",
+        "  COUNT(DISTINCT t.trace_id) AS total_turns,\n",
+        "  SUM(t.total_tokens) AS total_tokens,\n",
+        "  ROUND(AVG(t.total_tokens), 1) AS avg_tokens_per_turn,\n",
+        "  ROUND(AVG(t.prompt_tokens), 1) AS avg_prompt_tokens,\n",
+        "  ROUND(AVG(t.completion_tokens), 1) AS avg_completion_tokens,\n",
+        "  ROUND(SUM(t.total_cost_usd), 5) AS total_cost_usd,\n",
+        "  ROUND(AVG(t.total_cost_usd), 5) AS avg_cost_per_turn_usd\n",
+        "FROM\n",
+        "  sk_inno_aops.agentops_test.v_agentops_turns t\n",
+        "    LEFT JOIN sk_inno_aops.agentops_test.v_agentops_agent_profile a\n",
+        "      ON t.agent_id = a.agent_id\n",
+        "GROUP BY\n",
+        "  t.agent_id,\n",
+        "  a.agent_type,\n",
+        "  t.model_name\n",
+        "ORDER BY\n",
+        "  total_cost_usd DESC"
+      ]
+    },
+    {
+      "name": "ds_agent_profile",
+      "displayName": "ds_agent_profile",
+      "queryLines": [
+        "SELECT\n",
+        "  *\n",
+        "FROM\n",
+        "  sk_inno_aops.agentops_test.v_agentops_agent_profile"
+      ]
+    },
+    {
+      "name": "ds_agent_ops",
+      "displayName": "ds_agent_ops",
+      "config": {
+        "source": "sk_inno_aops.agentops_test.v_agentops_turns",
+        "measures": [
+          {
+            "name": "turn_count",
+            "expr": "COUNT(DISTINCT trace_id)"
+          },
+          {
+            "name": "success_rate",
+            "expr": "COUNT_IF(status = 'ok') / COUNT(*)",
+            "format": {
+              "type": "percentage",
+              "decimalPlaces": {
+                "type": "max",
+                "places": 1.0
+              }
+            }
+          },
+          {
+            "name": "p90_latency_ms",
+            "expr": "PERCENTILE_APPROX(duration_ms, 0.9)"
+          },
+          {
+            "name": "avg_latency_ms",
+            "expr": "AVG(duration_ms)"
+          },
+          {
+            "name": "total_tokens",
+            "expr": "SUM(total_tokens)"
+          },
+          {
+            "name": "prompt_tokens",
+            "expr": "SUM(prompt_tokens)"
+          },
+          {
+            "name": "completion_tokens",
+            "expr": "SUM(completion_tokens)"
+          },
+          {
+            "name": "total_cost_usd",
+            "expr": "SUM(total_cost_usd)"
+          },
+          {
+            "name": "avg_cost_per_turn_usd",
+            "expr": "SUM(total_cost_usd) / COUNT(*)"
+          },
+          {
+            "name": "last_active_at",
+            "expr": "MAX(span_timestamp)"
+          }
+        ],
+        "version": "1.1",
+        "comment": "Per-agent turn-level operational metrics (one row per agent.turn)",
+        "dimensions": [
+          {
+            "expr": "agent_id"
+          },
+          {
+            "expr": "span_date"
+          },
+          {
+            "expr": "model_name"
+          },
+          {
+            "expr": "status"
+          },
+          {
+            "expr": "agent_revision"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ds_agent_recent_turns",
+      "displayName": "ds_agent_recent_turns",
+      "queryLines": [
+        "SELECT\n",
+        "  span_timestamp,\n",
+        "  session_id,\n",
+        "  turn_id,\n",
+        "  agent_id,\n",
+        "  model_name,\n",
+        "  duration_ms,\n",
+        "  total_tokens,\n",
+        "  status,\n",
+        "  trace_id,\n",
+        "  trace_link\n",
+        "FROM\n",
+        "  sk_inno_aops.agentops_test.v_agentops_turns\n",
+        "ORDER BY\n",
+        "  span_timestamp DESC"
+      ]
+    },
+    {
+      "name": "ds_agent_components",
+      "displayName": "ds_agent_components",
+      "config": {
+        "source": "sk_inno_aops.agentops_test.v_agentops_component_spans",
+        "measures": [
+          {
+            "name": "call_count",
+            "expr": "COUNT(*)"
+          },
+          {
+            "name": "avg_duration_ms",
+            "expr": "AVG(duration_ms)"
+          }
+        ],
+        "version": "1.1",
+        "comment": "Tool and subagent spans per agent",
+        "dimensions": [
+          {
+            "expr": "agent_id"
+          },
+          {
+            "expr": "component_type"
+          },
+          {
+            "expr": "component_name"
+          },
+          {
+            "name": "component_label",
+            "expr": "CONCAT(component_type, '.', component_name)"
+          },
+          {
+            "expr": "span_date"
+          }
+        ]
+      }
+    }
+  ],
+  "pages": [
+    {
+      "name": "page_overview",
+      "displayName": "1. Operations Overview (운영 총괄)",
+      "layout": [
+        {
+          "widget": {
+            "name": "p1_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# 에이전트 운영 총괄 관제 (Operations Overview)"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_kpi_1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "registered_agents",
+                      "expression": "`registered_agents`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "등록 에이전트 수"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "registered_agents",
+                  "displayName": "개"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_kpi_2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "deployed_agents",
+                      "expression": "`deployed_agents`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "배포 에이전트 수"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "deployed_agents",
+                  "displayName": "개 (승인 완료)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_kpi_3",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "dau",
+                      "expression": "`dau`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "일간 활성 사용자 (DAU)"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "dau",
+                  "displayName": "명 (당일)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_kpi_4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_kpis",
+                  "fields": [
+                    {
+                      "name": "session_success_rate",
+                      "expression": "`session_success_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "세션 성공률"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "session_success_rate",
+                  "displayName": "%"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_chart_1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_chart_dau",
+                  "fields": [
+                    {
+                      "name": "span_date",
+                      "expression": "`span_date`"
+                    },
+                    {
+                      "name": "turn_count",
+                      "expression": "`turn_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "일별 실행 턴 추이",
+                "description": "일자별 에이전트 턴 활동"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "span_date",
+                  "displayName": "일자",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "turn_count",
+                  "displayName": "실행 턴 수",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_chart_2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_chart_latency",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "p90_ms",
+                      "expression": "`p90_ms`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "에이전트별 p90 턴 지연 (ms)",
+                  "fields": []
+                },
+                "description": {
+                  "value": "지연시간 상위 에이전트 모니터링",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "p90_ms",
+                  "displayName": "p90 지연 (ms)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "agent_id",
+                  "displayName": "에이전트",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "agent_id",
+                  "displayName": "에이전트",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_table_outliers",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_table_outliers",
+                  "fields": [
+                    {
+                      "name": "operational_status",
+                      "expression": "`operational_status`"
+                    },
+                    {
+                      "name": "name",
+                      "expression": "`name`"
+                    },
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "owner_group",
+                      "expression": "`owner_group`"
+                    },
+                    {
+                      "name": "agent_type",
+                      "expression": "`agent_type`"
+                    },
+                    {
+                      "name": "service_criticality",
+                      "expression": "`service_criticality`"
+                    },
+                    {
+                      "name": "agent_version",
+                      "expression": "`agent_version`"
+                    },
+                    {
+                      "name": "agent_revision",
+                      "expression": "`agent_revision`"
+                    },
+                    {
+                      "name": "deployment_status",
+                      "expression": "`deployment_status`"
+                    },
+                    {
+                      "name": "gate_decision",
+                      "expression": "`gate_decision`"
+                    },
+                    {
+                      "name": "turn_count",
+                      "expression": "`turn_count`"
+                    },
+                    {
+                      "name": "p90_duration_ms",
+                      "expression": "`p90_duration_ms`"
+                    },
+                    {
+                      "name": "error_rate",
+                      "expression": "`error_rate`"
+                    },
+                    {
+                      "name": "last_active_at",
+                      "expression": "`last_active_at`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "에이전트 운영 현황 (Agent Registry & Runtime Status)",
+                "description": "등록 정보와 런타임 지표 통합 · 상단 필터로 범위 지정 · 행 우클릭 → Drill to → 5. Agent Detail"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "operational_status",
+                    "displayName": "운영 상태"
+                  },
+                  {
+                    "fieldName": "name",
+                    "displayName": "에이전트 명칭"
+                  },
+                  {
+                    "fieldName": "agent_id",
+                    "useForSearch": true,
+                    "displayName": "에이전트 ID"
+                  },
+                  {
+                    "fieldName": "owner_group",
+                    "displayName": "소속 조직"
+                  },
+                  {
+                    "fieldName": "agent_type",
+                    "displayName": "표준 유형"
+                  },
+                  {
+                    "fieldName": "service_criticality",
+                    "displayName": "중요도"
+                  },
+                  {
+                    "fieldName": "agent_version",
+                    "displayName": "등록 버전"
+                  },
+                  {
+                    "fieldName": "agent_revision",
+                    "displayName": "런타임 리비전"
+                  },
+                  {
+                    "fieldName": "deployment_status",
+                    "displayName": "배포 상태"
+                  },
+                  {
+                    "fieldName": "gate_decision",
+                    "displayName": "릴리스 승인"
+                  },
+                  {
+                    "fieldName": "turn_count",
+                    "displayName": "실행 턴"
+                  },
+                  {
+                    "fieldName": "p90_duration_ms",
+                    "displayName": "p90 지연 (ms)"
+                  },
+                  {
+                    "fieldName": "error_rate",
+                    "displayName": "오류율 (%)"
+                  },
+                  {
+                    "fieldName": "last_active_at",
+                    "displayName": "최근 실행"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 12,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_filter_status",
+            "queries": [
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f1845e854496189318_operational_status",
+                "query": {
+                  "datasetName": "ds_p1_table_outliers",
+                  "fields": [
+                    {
+                      "name": "operational_status",
+                      "expression": "`operational_status`"
+                    },
+                    {
+                      "name": "operational_status_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "운영 상태"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "operational_status",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f1845e854496189318_operational_status"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_filter_deploy",
+            "queries": [
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f1845e854496189318_deployment_status",
+                "query": {
+                  "datasetName": "ds_p1_table_outliers",
+                  "fields": [
+                    {
+                      "name": "deployment_status",
+                      "expression": "`deployment_status`"
+                    },
+                    {
+                      "name": "deployment_status_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "배포 상태"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "deployment_status",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f1845e854496189318_deployment_status"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 10,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ov_filter_owner",
+            "queries": [
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f1845e854496189318_owner_group",
+                "query": {
+                  "datasetName": "ds_p1_table_outliers",
+                  "fields": [
+                    {
+                      "name": "owner_group",
+                      "expression": "`owner_group`"
+                    },
+                    {
+                      "name": "owner_group_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "소속 조직"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "owner_group",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f1845e854496189318_owner_group"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 10,
+            "width": 4,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "page_quality",
+      "displayName": "2. Quality & Reliability (품질 및 신뢰성)",
+      "layout": [
+        {
+          "widget": {
+            "name": "p2_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# 온라인 품질 및 런타임 안정성 (Quality & Reliability)\n",
+                "LLM Judge 4대 지표 · Review App HITL 검증 · OTel 컴포넌트 추적\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "ql_kpi_1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p2_kpis",
+                  "fields": [
+                    {
+                      "name": "overall_quality_score",
+                      "expression": "`overall_quality_score`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "온라인 생성 품질 (4대 종합)"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "overall_quality_score",
+                  "displayName": "점 (0~1.0)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ql_kpi_2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p2_kpis",
+                  "fields": [
+                    {
+                      "name": "hitl_accuracy_pct",
+                      "expression": "`hitl_accuracy_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "HITL 검증 정확도"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "hitl_accuracy_pct",
+                  "displayName": "% (인간 평가)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ql_kpi_3",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p2_kpis",
+                  "fields": [
+                    {
+                      "name": "safety_violations",
+                      "expression": "`safety_violations`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "가드레일 / 안전성 위반"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "safety_violations",
+                  "displayName": "건 (100% 차단)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ql_kpi_4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p2_kpis",
+                  "fields": [
+                    {
+                      "name": "component_success_rate",
+                      "expression": "`component_success_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "도구 · 서브에이전트 성공률"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "component_success_rate",
+                  "displayName": "% (정상 완료)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "ql_chart_quality_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p2_chart_quality_trend",
+                  "fields": [
+                    {
+                      "name": "eval_date",
+                      "expression": "`eval_date`"
+                    },
+                    {
+                      "name": "correctness",
+                      "expression": "`correctness`"
+                    },
+                    {
+                      "name": "groundedness",
+                      "expression": "`groundedness`"
+                    },
+                    {
+                      "name": "relevance",
+                      "expression": "`relevance`"
+                    },
+                    {
+                      "name": "completeness",
+                      "expression": "`completeness`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "온라인 품질 스코어 추이 (LLM Judge)",
+                "showDescription": true,
+                "description": "정확성, 근거성, 관련성, 완전성 4대 지표 시계열 추이"
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "eval_date",
+                  "displayName": "평가 일자",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fields": [
+                    {
+                      "fieldName": "correctness",
+                      "displayName": "정확성"
+                    },
+                    {
+                      "fieldName": "groundedness",
+                      "displayName": "근거성"
+                    },
+                    {
+                      "fieldName": "relevance",
+                      "displayName": "관련성"
+                    },
+                    {
+                      "fieldName": "completeness",
+                      "displayName": "완전성"
+                    }
+                  ],
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "ql_chart_tools",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p2_chart_tools",
+                  "fields": [
+                    {
+                      "name": "span_name",
+                      "expression": "`span_name`"
+                    },
+                    {
+                      "name": "avg_duration_ms",
+                      "expression": "`avg_duration_ms`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "도구 및 서브에이전트별 평균 지연 (ms)",
+                  "fields": []
+                },
+                "description": {
+                  "value": "내부 도구 및 서브에이전트 실행 지연 비교",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "avg_duration_ms",
+                  "displayName": "평균 지연 (ms)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "span_name",
+                  "displayName": "컴포넌트",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "span_name",
+                  "displayName": "컴포넌트",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "ql_table_diagnosis",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p1_table_outliers",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_type",
+                      "expression": "`agent_type`"
+                    },
+                    {
+                      "name": "owner_group",
+                      "expression": "`owner_group`"
+                    },
+                    {
+                      "name": "correctness",
+                      "expression": "`correctness`"
+                    },
+                    {
+                      "name": "groundedness",
+                      "expression": "`groundedness`"
+                    },
+                    {
+                      "name": "relevance",
+                      "expression": "`relevance`"
+                    },
+                    {
+                      "name": "completeness",
+                      "expression": "`completeness`"
+                    },
+                    {
+                      "name": "hitl_accuracy_pct",
+                      "expression": "`hitl_accuracy_pct`"
+                    },
+                    {
+                      "name": "failure_rate",
+                      "expression": "`failure_rate`"
+                    },
+                    {
+                      "name": "quality_status",
+                      "expression": "`quality_status`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "에이전트별 품질 및 컴포넌트 진단 (Top Outliers)",
+                  "fields": []
+                },
+                "description": {
+                  "value": "정확성·근거성 저하 및 도구/서브에이전트 실패율 상위 에이전트 우선 정렬",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "agent_id"
+                  },
+                  {
+                    "fieldName": "agent_type"
+                  },
+                  {
+                    "fieldName": "owner_group"
+                  },
+                  {
+                    "fieldName": "correctness"
+                  },
+                  {
+                    "fieldName": "groundedness"
+                  },
+                  {
+                    "fieldName": "relevance"
+                  },
+                  {
+                    "fieldName": "completeness"
+                  },
+                  {
+                    "fieldName": "hitl_accuracy_pct"
+                  },
+                  {
+                    "fieldName": "failure_rate"
+                  },
+                  {
+                    "fieldName": "quality_status"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 7
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "page_governance",
+      "displayName": "3. Release Gate & Governance (배포 및 거버넌스)",
+      "layout": [
+        {
+          "widget": {
+            "name": "p3_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# 배포 게이트 및 릴리스 거버넌스 (Release Gate & Governance)"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "gv_kpi_1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p3_kpis",
+                  "fields": [
+                    {
+                      "name": "gate_pass_rate",
+                      "expression": "`gate_pass_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "릴리스 게이트 통과율"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "gate_pass_rate",
+                  "displayName": "%"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "gv_kpi_2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p3_kpis",
+                  "fields": [
+                    {
+                      "name": "avg_release_lead_time_h",
+                      "expression": "`avg_release_lead_time_h`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "평균 릴리스 소요 시간"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg_release_lead_time_h",
+                  "displayName": "시간 (h, 실측 대기)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "gv_kpi_3",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p3_kpis",
+                  "fields": [
+                    {
+                      "name": "rollback_rate",
+                      "expression": "`rollback_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "배포 실패 및 롤백율"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "rollback_rate",
+                  "displayName": "%"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "gv_kpi_4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p3_kpis",
+                  "fields": [
+                    {
+                      "name": "integrity_alerts",
+                      "expression": "`integrity_alerts`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "런타임 무결성 경보"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "integrity_alerts",
+                  "displayName": "건 (working 탐지)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "gv_chart_cadence_combo",
+            "queries": [
+              {
+                "name": "combo_primary_1",
+                "query": {
+                  "datasetName": "ds_p3_chart_cadence_combo",
+                  "fields": [
+                    {
+                      "name": "cadence_week",
+                      "expression": "`cadence_week`"
+                    },
+                    {
+                      "name": "sum(release_count)",
+                      "expression": "SUM(`release_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "combo_secondary_1",
+                "query": {
+                  "datasetName": "ds_p3_chart_cadence_combo",
+                  "fields": [
+                    {
+                      "name": "cadence_week",
+                      "expression": "`cadence_week`"
+                    },
+                    {
+                      "name": "sum(pass_rate)",
+                      "expression": "SUM(`pass_rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "주간 릴리스 건수 및 게이트 통과율",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "combo",
+              "encodings": {
+                "x": {
+                  "fieldName": "cadence_week",
+                  "displayName": "주차",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "primary": {
+                    "scale": {
+                      "type": "quantitative"
+                    },
+                    "axis": {
+                      "title": "릴리스 건수"
+                    },
+                    "layers": [
+                      {
+                        "visual": "bar",
+                        "encodings": {
+                          "value": {
+                            "fieldName": "sum(release_count)",
+                            "displayName": "릴리스 건수"
+                          }
+                        },
+                        "queryName": "combo_primary_1"
+                      }
+                    ]
+                  },
+                  "secondary": {
+                    "scale": {
+                      "type": "quantitative"
+                    },
+                    "layers": [
+                      {
+                        "visual": "line",
+                        "encodings": {
+                          "value": {
+                            "fieldName": "sum(pass_rate)",
+                            "displayName": "통과율 (%)"
+                          }
+                        },
+                        "queryName": "combo_secondary_1"
+                      }
+                    ],
+                    "axis": {
+                      "title": "통과율 (%)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "gv_chart_security",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p3_chart_security",
+                  "fields": [
+                    {
+                      "name": "data_sensitivity",
+                      "expression": "`data_sensitivity`"
+                    },
+                    {
+                      "name": "agent_count",
+                      "expression": "`agent_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "데이터 민감도별 에이전트 분포",
+                  "fields": []
+                },
+                "description": {
+                  "value": "민감 데이터 취급 에이전트 거버넌스 관리",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "agent_count",
+                  "displayName": "에이전트 수",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "data_sensitivity",
+                  "displayName": "민감도",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "data_sensitivity",
+                  "displayName": "민감도",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "gv_table_audit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p3_table_audit",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_name",
+                      "expression": "`agent_name`"
+                    },
+                    {
+                      "name": "agent_type",
+                      "expression": "`agent_type`"
+                    },
+                    {
+                      "name": "owner_group",
+                      "expression": "`owner_group`"
+                    },
+                    {
+                      "name": "agent_version",
+                      "expression": "`agent_version`"
+                    },
+                    {
+                      "name": "lifecycle",
+                      "expression": "`lifecycle`"
+                    },
+                    {
+                      "name": "gate_decision",
+                      "expression": "`gate_decision`"
+                    },
+                    {
+                      "name": "upgrade_type",
+                      "expression": "`upgrade_type`"
+                    },
+                    {
+                      "name": "security_level",
+                      "expression": "`security_level`"
+                    },
+                    {
+                      "name": "data_sensitivity",
+                      "expression": "`data_sensitivity`"
+                    },
+                    {
+                      "name": "deployment_status",
+                      "expression": "`deployment_status`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "릴리스 감사 및 무결성 대조 테이블 (Release Audit)",
+                "showDescription": true,
+                "description": "Agent Registry 승인 결정(Decision)과 프로덕션 배포(Deployed) 상태 대조 검증"
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "agent_id"
+                  },
+                  {
+                    "fieldName": "agent_name"
+                  },
+                  {
+                    "fieldName": "agent_type"
+                  },
+                  {
+                    "fieldName": "owner_group"
+                  },
+                  {
+                    "fieldName": "agent_version"
+                  },
+                  {
+                    "fieldName": "lifecycle"
+                  },
+                  {
+                    "fieldName": "gate_decision"
+                  },
+                  {
+                    "fieldName": "upgrade_type"
+                  },
+                  {
+                    "fieldName": "security_level"
+                  },
+                  {
+                    "fieldName": "data_sensitivity"
+                  },
+                  {
+                    "fieldName": "deployment_status"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 7
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "page_cost",
+      "displayName": "4. Token Consumption & Cost (토큰 소비 및 비용)",
+      "layout": [
+        {
+          "widget": {
+            "name": "p4_header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# 토큰 소비 및 비용 거버넌스 (Token Consumption & Cost)\n",
+                "Rate Card 단가 곱연산 기준 (추산치) · 모델별/에이전트별 효율성 분석\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "cs_kpi_1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p4_kpis",
+                  "fields": [
+                    {
+                      "name": "total_tokens",
+                      "expression": "`total_tokens`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "총 소비 토큰 (MTD)"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_tokens",
+                  "displayName": "Tokens"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "cs_kpi_2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p4_kpis",
+                  "fields": [
+                    {
+                      "name": "total_cost_usd",
+                      "expression": "`total_cost_usd`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "추정 총비용 (Estimated)"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_cost_usd",
+                  "displayName": "USD"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "cs_kpi_3",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p4_kpis",
+                  "fields": [
+                    {
+                      "name": "avg_tokens_per_turn",
+                      "expression": "`avg_tokens_per_turn`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "쿼리(턴)당 평균 토큰"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg_tokens_per_turn",
+                  "displayName": "Tokens / Turn"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "cs_kpi_4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p4_kpis",
+                  "fields": [
+                    {
+                      "name": "avg_cost_per_turn_usd",
+                      "expression": "`avg_cost_per_turn_usd`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "쿼리(턴)당 평균 비용"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg_cost_per_turn_usd",
+                  "displayName": "USD / Turn"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "cs_chart_1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p4_chart_token_breakdown",
+                  "fields": [
+                    {
+                      "name": "span_date",
+                      "expression": "`span_date`"
+                    },
+                    {
+                      "name": "token_count",
+                      "expression": "`token_count`"
+                    },
+                    {
+                      "name": "token_type",
+                      "expression": "`token_type`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "일별 토큰 소비량 추이 (Input / Output / Cache)",
+                "showDescription": true,
+                "description": "일자별 입력 및 출력 토큰 소비 추이"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "span_date",
+                  "displayName": "일자",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "token_count",
+                  "displayName": "토큰 소비량",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "token_type",
+                  "displayName": "토큰 유형",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "position": "right",
+                    "title": "토큰 유형"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "cs_chart_2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p4_chart_model_tokens",
+                  "fields": [
+                    {
+                      "name": "model_name",
+                      "expression": "`model_name`"
+                    },
+                    {
+                      "name": "total_tokens",
+                      "expression": "`total_tokens`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "서빙 모델별 총 토큰 소비량",
+                  "fields": []
+                },
+                "description": {
+                  "value": "서빙 엔드포인트별 누적 토큰",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "total_tokens",
+                  "displayName": "총 소비 토큰",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "model_name",
+                  "displayName": "서빙 모델",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "model_name",
+                  "displayName": "서빙 모델",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "cs_table_efficiency",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_p4_table_efficiency",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_type",
+                      "expression": "`agent_type`"
+                    },
+                    {
+                      "name": "model_name",
+                      "expression": "`model_name`"
+                    },
+                    {
+                      "name": "total_turns",
+                      "expression": "`total_turns`"
+                    },
+                    {
+                      "name": "total_tokens",
+                      "expression": "`total_tokens`"
+                    },
+                    {
+                      "name": "avg_tokens_per_turn",
+                      "expression": "`avg_tokens_per_turn`"
+                    },
+                    {
+                      "name": "avg_prompt_tokens",
+                      "expression": "`avg_prompt_tokens`"
+                    },
+                    {
+                      "name": "avg_completion_tokens",
+                      "expression": "`avg_completion_tokens`"
+                    },
+                    {
+                      "name": "total_cost_usd",
+                      "expression": "`total_cost_usd`"
+                    },
+                    {
+                      "name": "avg_cost_per_turn_usd",
+                      "expression": "`avg_cost_per_turn_usd`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "에이전트별 토큰 소모 및 쿼리당 효율성 명세",
+                "showDescription": true,
+                "description": "호출 1건당 평균 토큰 처리량과 소비 비용 점유율 감사"
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "agent_id"
+                  },
+                  {
+                    "fieldName": "agent_type"
+                  },
+                  {
+                    "fieldName": "model_name"
+                  },
+                  {
+                    "fieldName": "total_turns"
+                  },
+                  {
+                    "fieldName": "total_tokens"
+                  },
+                  {
+                    "fieldName": "avg_tokens_per_turn"
+                  },
+                  {
+                    "fieldName": "avg_prompt_tokens"
+                  },
+                  {
+                    "fieldName": "avg_completion_tokens"
+                  },
+                  {
+                    "fieldName": "total_cost_usd"
+                  },
+                  {
+                    "fieldName": "avg_cost_per_turn_usd"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 7
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "page_agent_detail",
+      "displayName": "5. Agent Detail (에이전트 상세)",
+      "layout": [
+        {
+          "widget": {
+            "name": "p5_header",
+            "spec": {
+              "widgetType": "text",
+              "version": 1,
+              "encodings": {
+                "text": {
+                  "lines": [
+                    "# 에이전트 상세 (Agent Detail)\n",
+                    "1페이지 에이전트 목록에서 우클릭 → Drill to 로 진입하거나, 아래 필터에서 에이전트 ID를 선택하세요.\n"
+                  ],
+                  "fields": []
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 8,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p5_filter_agent",
+            "queries": [
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7fb7194144b960f9ac0bd217800_agent_id",
+                "query": {
+                  "datasetName": "ds_agent_profile",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7fc19d3143bad533cf703d633f8_agent_id",
+                "query": {
+                  "datasetName": "ds_agent_ops",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7fe9b801152bc5c3974e4e11f09_agent_id",
+                "query": {
+                  "datasetName": "ds_agent_components",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7fe9ae61843baa8fe9161658b26_agent_id",
+                "query": {
+                  "datasetName": "ds_agent_recent_turns",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f1845e854496189318_agent_id",
+                "query": {
+                  "datasetName": "ds_p1_table_outliers",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f5abe2f8540f57babc_agent_id",
+                "query": {
+                  "datasetName": "ds_p3_table_audit",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f78b5d1b4089d3dee0_agent_id",
+                "query": {
+                  "datasetName": "ds_p4_table_efficiency",
+                  "fields": [
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "agent_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "에이전트 ID 선택",
+                  "fields": []
+                }
+              },
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "agent_id",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7fb7194144b960f9ac0bd217800_agent_id"
+                  },
+                  {
+                    "fieldName": "agent_id",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7fc19d3143bad533cf703d633f8_agent_id"
+                  },
+                  {
+                    "fieldName": "agent_id",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7fe9b801152bc5c3974e4e11f09_agent_id"
+                  },
+                  {
+                    "fieldName": "agent_id",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7fe9ae61843baa8fe9161658b26_agent_id"
+                  },
+                  {
+                    "fieldName": "agent_id",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f1845e854496189318_agent_id"
+                  },
+                  {
+                    "fieldName": "agent_id",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f5abe2f8540f57babc_agent_id"
+                  },
+                  {
+                    "fieldName": "agent_id",
+                    "queryName": "dashboards/01f1d7547376159f9e13d0f295497d1d/datasets/01f1d7f82bf918f78b5d1b4089d3dee0_agent_id"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 0,
+            "width": 4,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "p5_profile",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_agent_profile",
+                  "fields": [
+                    {
+                      "name": "name",
+                      "expression": "`name`"
+                    },
+                    {
+                      "name": "agent_id",
+                      "expression": "`agent_id`"
+                    },
+                    {
+                      "name": "owner_group",
+                      "expression": "`owner_group`"
+                    },
+                    {
+                      "name": "agent_type",
+                      "expression": "`agent_type`"
+                    },
+                    {
+                      "name": "service_criticality",
+                      "expression": "`service_criticality`"
+                    },
+                    {
+                      "name": "agent_version",
+                      "expression": "`agent_version`"
+                    },
+                    {
+                      "name": "agent_revision",
+                      "expression": "`agent_revision`"
+                    },
+                    {
+                      "name": "deployment_status",
+                      "expression": "`deployment_status`"
+                    },
+                    {
+                      "name": "model_service",
+                      "expression": "`model_service`"
+                    },
+                    {
+                      "name": "security_level",
+                      "expression": "`security_level`"
+                    },
+                    {
+                      "name": "data_sensitivity",
+                      "expression": "`data_sensitivity`"
+                    },
+                    {
+                      "name": "gate_decision",
+                      "expression": "`gate_decision`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "에이전트 프로필"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "name",
+                    "displayName": "에이전트 명칭"
+                  },
+                  {
+                    "fieldName": "agent_id",
+                    "displayName": "에이전트 ID"
+                  },
+                  {
+                    "fieldName": "owner_group",
+                    "displayName": "소속 조직"
+                  },
+                  {
+                    "fieldName": "agent_type",
+                    "displayName": "표준 유형"
+                  },
+                  {
+                    "fieldName": "service_criticality",
+                    "displayName": "중요도"
+                  },
+                  {
+                    "fieldName": "agent_version",
+                    "displayName": "등록 버전"
+                  },
+                  {
+                    "fieldName": "agent_revision",
+                    "displayName": "런타임 리비전"
+                  },
+                  {
+                    "fieldName": "deployment_status",
+                    "displayName": "배포 상태"
+                  },
+                  {
+                    "fieldName": "model_service",
+                    "displayName": "바인딩 모델"
+                  },
+                  {
+                    "fieldName": "security_level",
+                    "displayName": "보안 등급"
+                  },
+                  {
+                    "fieldName": "data_sensitivity",
+                    "displayName": "데이터 민감도"
+                  },
+                  {
+                    "fieldName": "gate_decision",
+                    "displayName": "릴리스 승인"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p5_kpi_turns",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_agent_ops",
+                  "fields": [
+                    {
+                      "name": "measure(turn_count)",
+                      "expression": "MEASURE(`turn_count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "누적 실행 턴 수"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(turn_count)",
+                  "displayName": "턴"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p5_kpi_p90",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_agent_ops",
+                  "fields": [
+                    {
+                      "name": "measure(p90_latency_ms)",
+                      "expression": "MEASURE(`p90_latency_ms`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "p90 턴 지연시간 (ms)"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(p90_latency_ms)",
+                  "displayName": "ms"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p5_chart_tokens",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_agent_ops",
+                  "fields": [
+                    {
+                      "name": "span_date",
+                      "expression": "`span_date`"
+                    },
+                    {
+                      "name": "measure(prompt_tokens)",
+                      "expression": "MEASURE(`prompt_tokens`)"
+                    },
+                    {
+                      "name": "measure(completion_tokens)",
+                      "expression": "MEASURE(`completion_tokens`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "일별 토큰 소비량 (입력 / 출력)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "span_date",
+                  "displayName": "일자",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "measure(prompt_tokens)",
+                      "displayName": "입력 (Prompt)"
+                    },
+                    {
+                      "fieldName": "measure(completion_tokens)",
+                      "displayName": "출력 (Completion)"
+                    }
+                  ]
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 8,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "p5_kpi_success",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_agent_ops",
+                  "fields": [
+                    {
+                      "name": "measure(success_rate)",
+                      "expression": "MEASURE(`success_rate`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "세션 성공률"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(success_rate)",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "displayName": "정상 완료 비율"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p5_kpi_avg_cost",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_agent_ops",
+                  "fields": [
+                    {
+                      "name": "measure(avg_cost_per_turn_usd)",
+                      "expression": "MEASURE(`avg_cost_per_turn_usd`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "title": "턴당 평균 비용"
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "measure(avg_cost_per_turn_usd)",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "none",
+                    "significantFigures": {
+                      "type": "max",
+                      "figures": 3
+                    }
+                  },
+                  "displayName": "USD / Turn"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "p5_chart_components",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_agent_components",
+                  "fields": [
+                    {
+                      "name": "component_type",
+                      "expression": "`component_type`"
+                    },
+                    {
+                      "name": "measure(avg_duration_ms)",
+                      "expression": "MEASURE(`avg_duration_ms`)"
+                    },
+                    {
+                      "name": "component_label",
+                      "expression": "`component_label`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "도구 및 서브에이전트별 실행 지연",
+                "description": "컴포넌트별 평균 소요 시간 (ms)"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "measure(avg_duration_ms)",
+                  "displayName": "평균 지연 (ms)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "component_label",
+                  "displayName": "컴포넌트",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "component_type",
+                  "displayName": "유형",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "p5_table_turns",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_agent_recent_turns",
+                  "fields": [
+                    {
+                      "name": "span_timestamp",
+                      "expression": "`span_timestamp`"
+                    },
+                    {
+                      "name": "session_id",
+                      "expression": "`session_id`"
+                    },
+                    {
+                      "name": "turn_id",
+                      "expression": "`turn_id`"
+                    },
+                    {
+                      "name": "model_name",
+                      "expression": "`model_name`"
+                    },
+                    {
+                      "name": "duration_ms",
+                      "expression": "`duration_ms`"
+                    },
+                    {
+                      "name": "total_tokens",
+                      "expression": "`total_tokens`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "trace_id",
+                      "expression": "`trace_id`"
+                    },
+                    {
+                      "name": "trace_link",
+                      "expression": "`trace_link`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": "최근 턴 실행 이력",
+                "description": "Trace 컬럼 클릭 시 MLflow Trace 상세 페이지가 새 탭으로 열립니다"
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "span_timestamp",
+                    "displayName": "실행 일시"
+                  },
+                  {
+                    "fieldName": "session_id",
+                    "displayName": "세션 ID"
+                  },
+                  {
+                    "fieldName": "turn_id",
+                    "displayName": "턴 ID"
+                  },
+                  {
+                    "fieldName": "model_name",
+                    "displayName": "호출 모델"
+                  },
+                  {
+                    "fieldName": "duration_ms",
+                    "displayName": "소요 시간 (ms)"
+                  },
+                  {
+                    "fieldName": "total_tokens",
+                    "displayName": "토큰"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "상태"
+                  },
+                  {
+                    "fieldName": "trace_id",
+                    "displayName": "MLflow Trace",
+                    "actions": {
+                      "click": {
+                        "type": "link",
+                        "urlTemplate": "{{ trace_link }}",
+                        "openInNewTab": true
+                      }
+                    }
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 12,
+            "height": 7
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#F3F5F8",
+        "dark": "#0E151C"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#18222C"
+      },
+      "widgetBorderColor": {
+        "light": "#FFFFFF",
+        "dark": "#18222C"
+      },
+      "selectionColor": {
+        "light": "#2272B4",
+        "dark": "#4A9FE0"
+      },
+      "visualizationColors": [
+        "#3B82F6",
+        "#F59E0B",
+        "#10B981",
+        "#8B5CF6",
+        "#EF4444",
+        "#06B6D4",
+        "#EC4899",
+        "#84CC16"
+      ],
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED",
+      "widgetPadding": 16,
+      "widgetMargin": 8,
+      "widgetCornerRadius": 12,
+      "widgetShadow": 10,
+      "fontSettings": {
+        "base": {
+          "fontFamily": "Inter",
+          "fontColor": {
+            "light": "#1B2733",
+            "dark": "#E6EAEE"
+          }
+        },
+        "widgetTitle": {
+          "fontColor": {
+            "light": "#0F1B26",
+            "dark": "#F2F4F6"
+          },
+          "fontSize": 15,
+          "fontWeight": 600
+        },
+        "widgetDescription": {
+          "fontColor": {
+            "light": "#6B7A88",
+            "dark": "#93A1AE"
+          },
+          "fontSize": 12
+        },
+        "fieldTitle": {
+          "fontColor": {
+            "light": "#6B7A88",
+            "dark": "#93A1AE"
+          }
+        }
+      },
+      "gridLineColor": {
+        "light": "#EEF1F4",
+        "dark": "#26323D"
+      }
+    },
+    "applyModeEnabled": false
+  }
+}

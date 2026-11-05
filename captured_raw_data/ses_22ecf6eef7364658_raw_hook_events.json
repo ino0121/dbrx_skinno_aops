@@ -1,0 +1,68 @@
+[
+  {
+    "hook_event_name": "SessionStart",
+    "session_id": "ses_22ecf6eef7364658",
+    "model": "databricks-meta-llama-3-3-70b-instruct",
+    "cwd": "C:\\projects\\agentops\\test-skill-agent"
+  },
+  {
+    "hook_event_name": "UserPromptSubmit",
+    "session_id": "ses_22ecf6eef7364658",
+    "turn_id": "turn_001",
+    "prompt": "다음 텍스트의 지표를 산출하고 verifier로 검증하라: 'AgentOps는 AI 에이전트의 품질, 안정성, 비용 및 거버넌스를 관제하는 통합 운영 플랫폼입니다.'",
+    "model": "databricks-meta-llama-3-3-70b-instruct",
+    "cwd": "C:\\projects\\agentops\\test-skill-agent"
+  },
+  {
+    "hook_event_name": "PreToolUse",
+    "session_id": "ses_22ecf6eef7364658",
+    "turn_id": "turn_001",
+    "tool_name": "text_metrics_calculator",
+    "tool_use_id": "call_e92567c353d6",
+    "tool_input": {
+      "text": "AgentOps는 AI 에이전트의 품질, 안정성, 비용 및 거버넌스를 관제하는 통합 운영 플랫폼입니다."
+    },
+    "cwd": "C:\\projects\\agentops\\test-skill-agent"
+  },
+  {
+    "hook_event_name": "PostToolUse",
+    "session_id": "ses_22ecf6eef7364658",
+    "turn_id": "turn_001",
+    "tool_name": "text_metrics_calculator",
+    "tool_use_id": "call_e92567c353d6",
+    "tool_response": "{\"word_count\": 12, \"char_count\": 57, \"char_count_no_spaces\": 46, \"sentence_count\": 1}",
+    "tool_failed": false,
+    "cwd": "C:\\projects\\agentops\\test-skill-agent"
+  },
+  {
+    "hook_event_name": "SubagentStart",
+    "session_id": "ses_22ecf6eef7364658",
+    "turn_id": "turn_001",
+    "agent_id": "verifier",
+    "agent_type": "skill-based-subagent",
+    "cwd": "C:\\projects\\agentops\\test-skill-agent"
+  },
+  {
+    "hook_event_name": "SubagentStop",
+    "session_id": "ses_22ecf6eef7364658",
+    "turn_id": "turn_001",
+    "agent_id": "verifier",
+    "agent_type": "skill-based-subagent",
+    "last_assistant_message": "도구 산출 지표에 따르면, 원문의 단어 수는 12개, 글자 수는 57개, 공백을 제외한 글자 수는 46개, 문장 수는 1개로 계산되며, 이는 원문 텍스트와 일치합니다. 따라서 지표는 정확하게 원문 텍스트를 반영하고 있습니다.",
+    "cwd": "C:\\projects\\agentops\\test-skill-agent"
+  },
+  {
+    "hook_event_name": "Stop",
+    "session_id": "ses_22ecf6eef7364658",
+    "turn_id": "turn_001",
+    "last_assistant_message": "텍스트 분석 지표({'word_count': 12, 'char_count': 57, 'char_count_no_spaces': 46, 'sentence_count': 1})가 산출되었으며, verifier 서브에이전트 검증 결과(도구 산출 지표에 따르면, 원문의 단어 수는 12개, 글자 수는 57개, 공백을 제외한 글자 수는 46개, 문장 수는 1개로 계산되며, 이는 원문 텍스트와 일치합니다. 따라서 지표는 정확하게 원문 텍스트를 반영하고 있습니다.)를 확인했습니다.",
+    "transcript_path": "C:\\projects\\agentops\\captured_raw_data\\ses_22ecf6eef7364658_transcript.jsonl",
+    "cwd": "C:\\projects\\agentops\\test-skill-agent"
+  },
+  {
+    "hook_event_name": "SessionEnd",
+    "session_id": "ses_22ecf6eef7364658",
+    "transcript_path": "C:\\projects\\agentops\\captured_raw_data\\ses_22ecf6eef7364658_transcript.jsonl",
+    "cwd": "C:\\projects\\agentops\\test-skill-agent"
+  }
+]
